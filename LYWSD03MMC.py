@@ -19,7 +19,10 @@ import traceback
 import math
 import logging
 import json
+import pickle
 import requests
+import socket
+import struct
 import ssl
 
 @dataclass
@@ -89,10 +92,60 @@ def watchDog_Thread():
 		time.sleep(5)
 	
 
+def _socket_generator(host, port):
+	def _initiate_socket():
+		result = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		result.connect((host, port))
+		return result
+
+	socket_object = None
+	to_send = b''
+	last_status = 0
+
+	while True:
+		try:
+			# have something to report
+			if len(to_send) == 0:
+				to_send = yield last_status
+
+				# Happens at start and when there was an error
+				if socket_object is None:
+					logging.info('(Re)initializing socket')
+					socket_object = _initiate_socket()
+					last_status = 0  # success until failure
+
+			# Happy flow - will busy-wait on send until all sending is done
+			# If there's an exception, will yield status=1, and the calling layer
+			# will re-send 
+			number_bytes_sent = socket_object.send(to_send)
+			to_send = to_send[number_bytes_sent:]
+
+		except (socket.timeout, ConnectionRefusedError, OSError):
+			logging.exception('Socket had to be reset')
+			if socket_object is not None:
+				socket_object.close()
+			socket_object = None
+			last_status = 1
+			to_send = b''  # must reset sending stream
+
+
 def thread_SendingData():
 	global previousMeasurements
 	global measurements
 	path = os.path.dirname(os.path.abspath(__file__))
+
+	if args.graphite_pickle_callback:
+		match_object = re.match(r'(?P<hostname>[^:]+):(?P<port>\d+)/(?P<prefix>\w+)', args.graphite_pickle_callback)
+		if match_object is None:
+			print('Invalid format for graphite callback URL, should be host:port/prefix')
+			exit()
+		graphite_socket = _socket_generator(match_object.group('hostname'),
+											int(match_object.group('port')))
+		graphite_socket.send(None)
+		graphite_prefix = match_object.group('prefix')
+	else:
+		graphite_socket = None
+		graphite_prefix = None
 
 
 	while True:
@@ -145,6 +198,19 @@ def thread_SendingData():
 					r.raise_for_status()
 				except requests.exceptions.RequestException as e:
 					ret = 1
+
+			if graphite_prefix:
+				prefix = graphite_prefix.rstrip('.') + '.' + re.sub('[^-_A-Za-z0-9]', '_', mea.sensorname)
+				payload = pickle.dumps([
+					(prefix + '.temperature', (mea.timestamp, mea.temperature)),
+					(prefix + '.humidity', (mea.timestamp, mea.humidity)),
+					(prefix + '.voltage', (mea.timestamp, mea.voltage)),
+					(prefix + '.humidityCalibrated', (mea.timestamp, mea.calibratedHumidity)),
+					(prefix + '.batteryLevel', (mea.timestamp, mea.battery)),
+					(prefix + '.rssi', (mea.timestamp, mea.rssi))], protocol=2)
+				header = struct.pack("!L", len(payload))
+				message = header + payload
+				ret = graphite_socket.send(message)
 
 			if (ret != 0):
 					measurements.appendleft(mea) #put the measurement back
@@ -265,7 +331,7 @@ class MyDelegate(btle.DefaultDelegate):
 				print("Calibrated humidity: " + str(humidityCalibrated))
 				measurement.calibratedHumidity = humidityCalibrated
 
-			if args.callback or args.httpcallback:
+			if args.callback or args.httpcallback or args.graphite_pickle_callback:
 				measurements.append(measurement)
 
 			if(args.mqttconfigfile):
@@ -335,6 +401,8 @@ complexCalibrationGroup.add_argument("--offset2","-o2", help="Enter the offset f
 callbackgroup = parser.add_argument_group("Callback related arguments")
 callbackgroup.add_argument("--callback","-call", help="Pass the path to a program/script that will be called on each new measurement")
 callbackgroup.add_argument("--httpcallback","-http", help="Pass the URL to a program/script that will be called on each new measurement")
+callbackgroup.add_argument("--graphite-pickle-callback","-graphite", help="Send the data using the Graphite Pickle Protocol")
+
 callbackgroup.add_argument("--name","-n", help="Give this sensor a name reported to the callback script")
 callbackgroup.add_argument("--skipidentical","-skip", help="N consecutive identical measurements won't be reported to callbackfunction",metavar='N', type=int, default=0)
 callbackgroup.add_argument("--influxdb","-infl", help="Optimize for writing data to influxdb,1 timestamp optimization, 2 integer optimization",metavar='N', type=int, default=0)
@@ -431,7 +499,7 @@ if args.TwoPointCalibration:
 if not args.name:
 	args.name = args.device
 
-if args.callback or args.httpcallback:
+if args.callback or args.httpcallback or args.graphite_pickle_callback:
 	dataThread = threading.Thread(target=thread_SendingData)
 	dataThread.start()
 
@@ -648,7 +716,7 @@ elif args.atc:
 					if measurement.calibratedHumidity == 0:
 						measurement.calibratedHumidity = measurement.humidity
 
-					if args.callback or args.httpcallback:
+					if args.callback or args.httpcallback or args.graphite_pickle_callback:
 						measurements.append(measurement)
 
 					if args.mqttconfigfile:
