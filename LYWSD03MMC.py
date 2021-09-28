@@ -397,7 +397,7 @@ callbackgroup.add_argument("--httpcallback","-http", help="Pass the URL to a pro
 callbackgroup.add_argument("--graphite-pickle-callback", "-graphite",
                            help="Send the data using the Graphite Pickle Protocol. Must be in the format host:port/prefix where prefix "
                            "is added to all metrics sent to Graphite",
-						   type=lambda value: re.match(r'(?P<hostname>[^:]+):(?P<port>\d+)/(?P<prefix>\w+)', value)
+						   type=lambda value: re.match(r'(?P<hostname>[^:]+):(?P<port>\d+)/(?P<prefix>\w+)', value))
 
 callbackgroup.add_argument("--name","-n", help="Give this sensor a name reported to the callback script")
 callbackgroup.add_argument("--skipidentical","-skip", help="N consecutive identical measurements won't be reported to callbackfunction",metavar='N', type=int, default=0)
