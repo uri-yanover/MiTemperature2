@@ -93,30 +93,27 @@ def watchDog_Thread():
 	
 
 def _socket_generator(host, port):
-	def _initiate_socket():
-		result = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		result.connect((host, port))
-		return result
-
 	socket_object = None
 	to_send = b''
 	last_status = 0
 
 	while True:
 		try:
-			# have something to report
+			# Happy flow - will poll send() until to_send is empty
+			# If there's an exception along the way, last_status will become 1, 
+			# which means to_send is emptied; the calling layer is responsible
+			# for initiating a retransmit 
 			if len(to_send) == 0:
+				# We yield (out) the last operation status and get sent in new data
 				to_send = yield last_status
 
 				# Happens at start and when there was an error
 				if socket_object is None:
 					logging.info('(Re)initializing socket')
-					socket_object = _initiate_socket()
-					last_status = 0  # success until failure
+					socket_object = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+					socket_object.connect((host, port))
+					last_status = 0  # report success until an exception has happened
 
-			# Happy flow - will busy-wait on send until all sending is done
-			# If there's an exception, will yield status=1, and the calling layer
-			# will re-send 
 			number_bytes_sent = socket_object.send(to_send)
 			to_send = to_send[number_bytes_sent:]
 
@@ -401,7 +398,9 @@ complexCalibrationGroup.add_argument("--offset2","-o2", help="Enter the offset f
 callbackgroup = parser.add_argument_group("Callback related arguments")
 callbackgroup.add_argument("--callback","-call", help="Pass the path to a program/script that will be called on each new measurement")
 callbackgroup.add_argument("--httpcallback","-http", help="Pass the URL to a program/script that will be called on each new measurement")
-callbackgroup.add_argument("--graphite-pickle-callback","-graphite", help="Send the data using the Graphite Pickle Protocol")
+callbackgroup.add_argument("--graphite-pickle-callback","-graphite", 
+					help="Send the data using the Graphite Pickle Protocol. Must be in the format host:port/prefix where prefix"
+					"is added to all metrics sent to Graphite")
 
 callbackgroup.add_argument("--name","-n", help="Give this sensor a name reported to the callback script")
 callbackgroup.add_argument("--skipidentical","-skip", help="N consecutive identical measurements won't be reported to callbackfunction",metavar='N', type=int, default=0)
