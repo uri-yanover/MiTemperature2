@@ -132,14 +132,10 @@ def thread_SendingData():
 	path = os.path.dirname(os.path.abspath(__file__))
 
 	if args.graphite_pickle_callback:
-		match_object = re.match(r'(?P<hostname>[^:]+):(?P<port>\d+)/(?P<prefix>\w+)', args.graphite_pickle_callback)
-		if match_object is None:
-			print('Invalid format for graphite callback URL, should be host:port/prefix')
-			exit()
-		graphite_socket = _socket_generator(match_object.group('hostname'),
-											int(match_object.group('port')))
-		graphite_socket.send(None)
-		graphite_prefix = match_object.group('prefix')
+		graphite_socket = _socket_generator(args.graphite_pickle_callback.group('hostname'),
+											int(args.graphite_pickle_callback.group('port')))
+		graphite_socket.send(None)  # an empty send bootstraps the code
+		graphite_prefix = args.graphite_pickle_callback.group('prefix')
 	else:
 		graphite_socket = None
 		graphite_prefix = None
@@ -398,9 +394,10 @@ complexCalibrationGroup.add_argument("--offset2","-o2", help="Enter the offset f
 callbackgroup = parser.add_argument_group("Callback related arguments")
 callbackgroup.add_argument("--callback","-call", help="Pass the path to a program/script that will be called on each new measurement")
 callbackgroup.add_argument("--httpcallback","-http", help="Pass the URL to a program/script that will be called on each new measurement")
-callbackgroup.add_argument("--graphite-pickle-callback","-graphite", 
-					help="Send the data using the Graphite Pickle Protocol. Must be in the format host:port/prefix where prefix"
-					"is added to all metrics sent to Graphite")
+callbackgroup.add_argument("--graphite-pickle-callback", "-graphite",
+                           help="Send the data using the Graphite Pickle Protocol. Must be in the format host:port/prefix where prefix "
+                           "is added to all metrics sent to Graphite",
+						   type=lambda value: re.match(r'(?P<hostname>[^:]+):(?P<port>\d+)/(?P<prefix>\w+)', value)
 
 callbackgroup.add_argument("--name","-n", help="Give this sensor a name reported to the callback script")
 callbackgroup.add_argument("--skipidentical","-skip", help="N consecutive identical measurements won't be reported to callbackfunction",metavar='N', type=int, default=0)
